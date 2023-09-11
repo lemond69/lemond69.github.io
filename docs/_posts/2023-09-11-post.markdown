@@ -1,0 +1,114 @@
+---
+layout: page
+title: Detecting cloud sandboxes in ring 3 using timing attack
+---
+So recently, I came across [this](https://github.com/void-stack/Hypervisor-Detection/) github repo, which claims to be able to detect all sandboxes and VMs, including cloud sandboxes such as [any.run](https://app.any.run/). Of course, this is a claim made by many, and is rarely backed up, and the proof provided did seem convincing, so I took a look, and tried to compile it. I modified the code into C, stripped off all the unnecessary parts (and only kept the CPUID vs FYL2XP1 section), and got this:
+```c
+#include <windows.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <intrin.h>
+
+struct _cpuid_buffer_t
+{
+    uint32_t EAX;
+    uint32_t EBX;
+    uint32_t ECX;
+    uint32_t EDX;
+};
+
+int main(){
+    LARGE_INTEGER start;
+    LARGE_INTEGER end;
+    double ration=0;
+    for(int i=0;i<100;i++){
+        QueryPerformanceCounter(&start);
+        asm("FYL2XP1");
+        QueryPerformanceCounter(&end);
+        double fy = end.QuadPart - start.QuadPart;
+        
+        QueryPerformanceCounter(&start);
+        struct _cpuid_buffer_t cpuid_data;
+        __cpuid((int*)(&cpuid_data), 1);
+        QueryPerformanceCounter(&end);
+        double cpu = end.QuadPart - start.QuadPart;
+        ration+=cpu/fy;
+    }
+    ration/=100;
+    printf("%f\n", ration);
+    if(ration > 1) printf("SANDBOX DETECTED!!!\n");
+    else printf("Clean\n");
+}
+```
+> Note that all code shown in this document is compiled with mingw, x86, using -masm=intel. Benchmarks shown are all done when the program is compiled with -O3, but it should also work at any other optimization levels
+
+Sadly, after testing the code, it seemed to have some significant results overlap between a physical and virtual machine. Scores shown below are of average `CPUID`:`FYL2XP1` timing ratio:
+-   Wine on i7-1165G7: 0.8
+-   Windows 7 on KVM: 4.2
+-   [Triage](https://tria.ge/) Windows 7: 1.95
+-   any.run Windows 7: 1.2
+-   Triage Windows 10 2004: 6.05
+-   Native Windows 10 on [Pentium Gold 4425Y](https://ark.intel.com/content/www/us/en/ark/products/192786/intel-pentium-gold-processor-4425y-2m-cache-1-70-ghz.html): 3.5
+
+As we can see, there is significant overlap between the Pentium and the Windows 7 virtual machines. However, I also noted that for the specific version of the OS, the physical machines do seem to have a lower score than for virtual machines. As such, I suspected that some changes in Windows API (specifically the __cpuid call) was introduced, and hence swapped it out for an ASM instruction.
+
+After some experimentation, we result in this code:
+```c
+#include <windows.h>
+#include <stdio.h>
+#define THRESHOLD 4.8
+#define MAX_SAND 60 // 40/100 is minimum score
+int main(){
+    LARGE_INTEGER start;
+    LARGE_INTEGER end;
+    int phys=0;
+    int sand=0;
+    double sum=0;
+    for(int j=0;j<100;j++){
+        QueryPerformanceCounter(&start);
+        for(int i=0;i<100;i++) asm("FYL2XP1");
+        QueryPerformanceCounter(&end);
+        double fy = end.QuadPart - start.QuadPart;
+        
+        QueryPerformanceCounter(&start);
+        for(int i=0;i<100;i++) asm("push eax\n\tpush ebx\n\tpush ecx\n\tpush edx\n\txor eax, eax\n\tCPUID\n\tpop edx\n\tpop ecx\n\tpop ebx\n\tpop eax");
+        QueryPerformanceCounter(&end);
+        double cpu = end.QuadPart - start.QuadPart;
+        double ration=cpu/fy;
+        if(ration > THRESHOLD) sand++;
+        else phys++;
+        sum+=ration;
+        Sleep(10);
+    }
+    sum/=100;
+    printf("Avg. score: %f\n", sum);
+    printf("%d%% likely to be physical\n", phys);
+    if(sand>MAX_SAND) printf("SANDBOX DETECTED!!!\n");
+    else printf("Clean\n");
+}
+```
+
+
+After testing the code, we discover that there is NO overlap between physical and virtual machines, confirming the theory that there was likely a WINAPI change between Windows 7 and 10. Results, where THRESHOLD=4.8, and 100%=physical machine, 0%=sandbox:
+-   Wine on i7-1165G7: 100%
+-   Windows 7 on KVM: 0%
+-   Triage Windows 7: 0-3%
+-   any.run Windows 7: 0-2%
+-   Triage Windows 10 1703: 7-21%
+-   Triage Windows 10 2004: 0-5%
+-   Native Windows 10 on Pentium Gold 4425Y: 64-100%
+-   Native Windows 10 on [AMD Ryzen 9 PRO 7940HS](https://www.amd.com/en/products/apu/amd-ryzen-9-pro-7940hs): 100%
+
+Note that I added a MAX_SAND variable instead of just using a 50% pass/fail method. This is because I noted that at THRESHOLD=4.8, the lowest score a physical machine would get was 64%, while the highest scored for a sandbox was 21%. As such, instead of trying to adjust the threshold further, I just met in the middle and set 40% as the pass grade.
+
+I have also noticed that there is a rather large score differential observed for the Pentium machine. The score can hit as low as 64% when under heavy load (this score was observed when I opened both Teams and a large IDE at once), as such, I added a `Sleep(10)` delay for each cycle, so as to allow measurements to be taken over a large timespan, and hence be more accurate.
+
+The theory behind this is because `FYL2XP1` is a really slow floating point instruction, it allows for good timing baseline (instead of a fixed time constant, to have a baseline for the CPU). As such, we can see how much comparatively slower the `CPUID` instruction is, as the hypervisor needs to lookup the host/preset CPUID value, which would take comparatively longer than a native `CPUID` instruction.
+
+As for mitigations, I am really unsure of whether this is possible to mitigate without major changes to the hypervisor.
+
+In conclusion, we deem this method to be one of the only few methods capable of reliably detecting advanced cloud sandboxes from ring 3 with high accuracy and near-zero false positives/negatives due to the large score differential between lowest physical score and highest sandbox score.
+
+References:
+- [https://github.com/void-stack/Hypervisor-Detection/](https://github.com/void-stack/Hypervisor-Detection/)
+- [https://secret.club/2020/01/12/battleye-hypervisor-detection.html](https://secret.club/2020/01/12/battleye-hypervisor-detection.html)
