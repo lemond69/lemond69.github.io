@@ -1,0 +1,148 @@
+---
+layout: page
+title: Realtime code encryption - Part 1
+---
+Recently, I came across Denuvo and VMProtect, and the idea of encrypting code on the fly seemed pretty interesting. Hence, I decided to implement something similar, but instead of at an instruction level, we do so at a function level, allowing for minimal performance loss with the cost of it being slightly easier to decode.
+## High level description
+So, how will we achieve this? We would want something to inject at the start and end of every function, so that we can decrypt and re-encrypt the code. Luckily, the flag `-finstrument-functions` is available for mingw and GCC. This is extremely useful, as it allows for a call to `__cyg_profile_func_enter` and `__cyg_profile_func_exit` to be injected at the start and end of each function respectively.
+## Implementation
+> All the code is also available [here](https://github.com/lemond69/runtime-crypter.git)
+
+We start with implementing the function size calculator. This is a relatively self-explanatory piece of code:
+```c
+int getfunc(void* func, int mark){
+    int i=0;
+    while(1){
+        //hunt for call opcode
+        if (*(unsigned char*)(func+i)==0xe8){
+            int a=*(int *)(func+i+1); //pull relative offset
+            a+=(int)func+i; //fix offset
+            if(a+5==mark) break; //check offset
+        }
+        i++;
+    }
+    return i;
+}
+```
+This allows for an easy calculation of the size of the function. We look for the E8 [offset], or `call` in x86 asm, opcodes, allowing us to trace and find the absolute address of the resultant location.
+
+Next, we implement the encryptor code along with encryption key lookup scheme. We will just use a simple XOR scheme, but more advanced encryption schemes can easily be used:
+```c
+int keys[100];
+int keylookup(void* func){
+    int j=0;
+    while(keys[j]!=0 && keys[j]!=(int)func) j+=2;
+    if(keys[j]==0) keys[j]=(int)func;
+    return j;
+}
+//works as both encryption and decryption, this is XOR
+void encfn(void* func, int i, const char* key){
+    DWORD a;
+    unsigned char* code=func;
+    VirtualProtect (code, i, PAGE_EXECUTE_READWRITE, &a);
+    for(int j=0;j<i;j++) code[j]^=key[j%4];
+    VirtualProtect (code, i, PAGE_EXECUTE_READ, &a);
+}
+```
+> Note: This code is meant to run on Windows OS
+
+Note how we use RWX permissions for the first VirtualProtect call. This is often suspicious to EDRs due to it commonly being used in self-modifying shellcodes, and as such, we will fix this later.
+
+Implement setup logic:
+```c
+int mark, mark2;
+int fakemain();
+int main() {
+    srand(time(NULL));
+    memset(keys, 0, 100*sizeof(int));
+    memset(callstack, 0, 100*sizeof(void*));
+    mark=((int)__cyg_profile_func_exit);
+    mark2=((int)__cyg_profile_func_enter);
+    printf("%d",fakemain()); //rename original main to avoid conflict
+    return 0;
+}
+```
+
+Now, we implement function entry logic:
+```c
+void* callstack[100]; //create stack for caller functions
+int sptr=-1; //pointer to stack
+void __cyg_profile_func_enter (void *func,  void *caller){
+    printf("entering %x, caller %x\n", func, callstack[sptr]);
+    int i, j;
+    unsigned char key[4];
+    if(sptr>-1){ 
+        //encrypt parent function, if there is one
+        i=getfunc(callstack[sptr], mark);
+        j=keylookup(callstack[sptr]);
+        keys[j+1]=rand(); //generate new key
+        memcpy(key, &keys[j+1], 4);
+        encfn(callstack[sptr], i, key); //encrypt
+    }
+    //decrypt function we want to enter
+    func+=getfunc(func, mark2)+5; //go to function AFTER call to __cyg_profile_func_enter
+    callstack[++sptr]=func; //push address to call stack
+    i=getfunc(func, mark); //get size of func
+    j=keylookup(func); //get key of func
+    memcpy(key, &keys[j+1], 4);
+    keys[j+1]=rand(); //generate new key for next round
+    encfn(func, i, key); //decrypt
+}
+```
+
+Function exit logic:
+```c
+void __cyg_profile_func_exit (void *func, void *caller){
+    printf("exiting %x, back to %x\n", func, callstack[sptr-1]);
+    int i, j;
+    unsigned char key[4];
+    i=getfunc(callstack[sptr], mark); //get func size
+    j=keylookup(callstack[sptr]); //get key
+    memcpy(key, &keys[j+1], 4);
+    encfn(callstack[sptr--], i, key); //encrypt func
+    if(sptr>-1){
+        //decrypt parent func, if any
+        i=getfunc(callstack[sptr], mark);
+        j=keylookup(callstack[sptr]);
+        memcpy(key, &keys[j+1], 4);
+        encfn(callstack[sptr], i, key);
+    }
+}
+```
+
+And that's it! The above code has enough comments to be rather self-explanatory, but what it does, is ensures ONLY the function being run currently is left decrypted, everything else, should stay nice and encrypted in memory. This would make it very painful to attempt to do analysis of a memory dump, especially if complex routines are involved in the code.
+
+In order to compile, I used these commands:
+```
+i686-w64-mingw32-gcc main.c -finstrument-functions -c -o main.o -m32 -O1
+i686-w64-mingw32-gcc -c -o hook.o hook.c -m32 -O2
+i686-w64-mingw32-gcc main.o hook.o -m32 -s
+```
+These optimization levels are what I have determined to work reliably on all tested programs. It is definitely possible to get it to work reliably on higher optimization levels, but that would make the code rather complicated, and I would rather not do that.
+
+## Fixing RWX
+Previously, I mentioned that in the encryptor function, we would fix the RWX memory permissions, replacing it with RX. If you tried it the naive way, and just replaced `PAGE_EXECUTE_READWRITE` with `PAGE_READWRITE`, you would have gotten a page fault for execute access. Why is that happening, when we are only trying to mark a small section as RW? Well, this is because `VirtualProtect` can [only change the permissions of WHOLE PAGES](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), and as such, the ENTIRE .text section os made RW, causing the encryptor function to also halt.
+
+How do we fix this? Simple, just move the encryptor function to another page. This can be done by modifying the code like so:
+```c
+void (*newenc)(void*, int, const char*);
+int main() {
+    srand(time(NULL));
+    memset(keys, 0, 100*sizeof(int));
+    memset(callstack, 0, 100*sizeof(void*));
+    mark=((int)__cyg_profile_func_exit);
+    mark2=((int)__cyg_profile_func_enter);
+    newenc = VirtualAlloc(0, 256, MEM_COMMIT, PAGE_READWRITE); //a blatant overallocation, but it makes it simple
+    memcpy(newenc, encfn, 256);
+    DWORD a;
+    VirtualProtect(newenc, 256, PAGE_EXECUTE_READ, &a);
+    printf("%d",fakemain());
+    VirtualFree(newenc, 0, MEM_RELEASE);
+    return 0;
+}
+```
+After applying this code, you will note that you can change the RWX in `encfn` to RW, and it will work fine, with no page faults. As such, by redirecting the execution to another page, we can modify the main page with no consequences.
+> Note: More advanced readers may notice that I did not bother to fix any relative offsets in `encfn`. This is to simplify the code, and it is also rather unnecessary, as I have refrained from calling any external functions that use relative offsets (`VirtualProtect` and other WinAPI calls use absolute offsets) in the function, allowing for a simpler implementation
+
+## Exercise for the reader
+If you have played around with the code, you may also notice that the code breaks when you try to enter a `while(1)` loop (with no `break`). This is because the compiler does not expect you to exit the loop, and omits the call to `__cyg_profile_func_exit` at the end of the function. However, there are multiple simple ways to fix this, and I have left this as an exercise for the reader for now.
