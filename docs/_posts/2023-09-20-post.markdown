@@ -52,3 +52,5 @@ The client-side code  is also simple enough to translate into any language of yo
 We noted that due to the base64 encoding, a maximum of approximately 730 characters could be transmitted at once. As such, we recommend chunking long messages into blocks of 500 characters to ensure no data is lost or truncated. We also note that there is 2 network requests required to establish bidirectional communication, something which could result in greater network overhead and more latency. We have also not verified if any ratelimits are present that may affect communications.
 
 In conclusion, this is a very robust method that can evade very strict firewalls. This method also stands out as it does not abuse domain fronting, allowing it to bypass TLS inspections too. However, due to the high network overhead and potential for rate limiting, as well as easy mitigation (by simply using CAPTCHAs), we feel that this should only be used as a last resort C2 for the strictest firewalls, where all other communication methods fail.
+
+Code also available [here](https://github.com/lemond69/citation-c2/)
