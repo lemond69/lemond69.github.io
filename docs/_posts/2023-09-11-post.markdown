@@ -2,6 +2,9 @@
 layout: page
 title: Detecting cloud sandboxes from ring 3
 ---
+
+> Update 22/09/23 - Added VirusTotal sandbox results
+
 So recently, I came across [this](https://github.com/void-stack/Hypervisor-Detection/) github repo, which claims to be able to detect all sandboxes and VMs, including cloud sandboxes such as [any.run](https://app.any.run/). Of course, this is a claim made by many, and is rarely backed up, and the proof provided did seem convincing, so I took a look, and tried to compile it. I modified the code into C, stripped off all the unnecessary parts (and only kept the CPUID vs FYL2XP1 section), and got this:
 ```c
 #include <windows.h>
@@ -96,6 +99,10 @@ After testing the code, we discover that there is NO overlap between physical an
 -   any.run Windows 7: 0-2%
 -   Triage Windows 10 1703: 7-21%
 -   Triage Windows 10 2004: 0-5%
+-   [VirusTotal](https://support.virustotal.com/hc/en-us/articles/6253253596957-In-house-Sandboxes-behavioural-analysis-products) CAPE Sandbox: 0%
+-   VirusTotal Microsoft Sysinternals: 1%
+-   VirusTotal Jujubox: 0%
+-   VirusTotal Zenbox: 91%
 -   Native Windows 10 on Pentium Gold 4425Y: 64-100%
 -   Native Windows 10 on [AMD Ryzen 9 PRO 7940HS](https://www.amd.com/en/products/apu/amd-ryzen-9-pro-7940hs): 100%
 
@@ -103,14 +110,15 @@ Note that I added a MAX_SAND variable instead of just using a 50% pass/fail meth
 
 I have also noticed that there is a rather large score differential observed for the Pentium machine. The score can hit as low as 64% when under heavy load (this score was observed when I opened both Teams and a large IDE at once), as such, I added a `Sleep(10)` delay for each cycle, so as to allow measurements to be taken over a large timespan, and hence be more accurate.
 
+Do also note the false negative on VirusTotal Zenbox, showing that this code is not 100% foolproof. As such, THRESHOLD should be adjusted based on circumstance, THRESHOLD=3.5 is sufficient to block out Zenbox false negative, but may trigger false positive on the Pentium and other older CPUs when under heavy load.
+
 The theory behind this is because `FYL2XP1` is a really slow floating point instruction, it allows for good timing baseline (instead of a fixed time constant, to have a baseline for the CPU). As such, we can see how much comparatively slower the `CPUID` instruction is, as the hypervisor needs to lookup the host/preset CPUID value, which would take comparatively longer than a native `CPUID` instruction.
 
-As for mitigations, I am really unsure of whether this is possible to mitigate without major changes to the hypervisor.
-
-In conclusion, we deem this method to be one of the only few methods capable of reliably detecting advanced cloud sandboxes from ring 3 with high accuracy and near-zero false positives/negatives due to the large score differential between lowest physical score and highest sandbox score.
+In conclusion, we deem this method to be one of the only few methods capable of reliably detecting advanced cloud sandboxes from ring 3 with high accuracy and near-zero false positives/negatives due to the large score differential between physical and sandbox scores. However, it is important to note that VirusTotal Zenbox is capable of triggering false negative detections, and it generally seems that Windows 10 based virtual machines seem to be able to cause this program to give a higher physical machine confidence.
 
 References:
 - [https://github.com/void-stack/Hypervisor-Detection/](https://github.com/void-stack/Hypervisor-Detection/)
 - [https://secret.club/2020/01/12/battleye-hypervisor-detection.html](https://secret.club/2020/01/12/battleye-hypervisor-detection.html)
 
 Code also available [here](https://github.com/lemond69/sandbox-detect)
+
