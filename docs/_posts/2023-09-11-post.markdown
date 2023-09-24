@@ -121,4 +121,3 @@ References:
 - [https://secret.club/2020/01/12/battleye-hypervisor-detection.html](https://secret.club/2020/01/12/battleye-hypervisor-detection.html)
 
 Code also available [here](https://github.com/lemond69/sandbox-detect)
-

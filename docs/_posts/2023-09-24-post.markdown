@@ -1,0 +1,154 @@
+---
+layout: page
+title: Beating VirusTotal Zenbox
+---
+
+> Note: This is part 2 to [this post](https://lemond69.github.io/2023/09/11/post.html). Please read that first for context
+
+>  All code shown in the post is also available [here](https://github.com/lemond69/sandbox-detect)
+
+So in the previous post, I noted that I was unable to beat VirusTotal's Zenbox, getting a score of 91% in there, while I could get as low as 64% on the Pentium. This is an overlap of scores, which is obviously unacceptable as it means that it would be impossible to avoid false positives/negatives. As such, I got to work trying to force back a score differential between the Zenbox and the Pentium device, and I am happy to report that I have succeeded.
+
+## Problems with the old script
+Main loop of the old script:
+```c
+for(int j=0;j<100;j++){
+    QueryPerformanceCounter(&start);
+    for(int i=0;i<100;i++) asm("FYL2XP1");
+    QueryPerformanceCounter(&end);
+    double fy = end.QuadPart - start.QuadPart;
+    
+    QueryPerformanceCounter(&start);
+    for(int i=0;i<100;i++) asm("push eax\n\tpush ebx\n\tpush ecx\n\tpush edx\n\txor eax, eax\n\tCPUID\n\tpop edx\n\tpop ecx\n\tpop ebx\n\tpop eax");
+    QueryPerformanceCounter(&end);
+    double cpu = end.QuadPart - start.QuadPart;
+    double ration=cpu/fy;
+    if(ration > THRESHOLD) sand++;
+    else phys++;
+    sum+=ration;
+    Sleep(10);
+}
+```
+The old script tended to fail when the system was under heavy load, for weaker systems. As such, this would cause the Pentium to hit as low as 64% when opening multiple large programs. Thus, I added the `Sleep(10)` line to the script to allow measurements to be taken over a longer time. However, this rest also seems to allow the hypervisor for Zenbox to get a much higher score, as for how that occurs, I am rather unsure. If anyone knows why this is the case, please do let me know.
+
+## Decreasing score of Zenbox
+As such, now that we know the Sleep causes Zenbox to seem more like a physical machine, we can shorten the Sleep, and increase sample size to decrease Zenbox score. However, this would also inevitably decrease the score of the Pentium machine, which will be addressed soon.
+
+Modified main loop:
+```c
+for(int j=0;j<100;j++){
+    QueryPerformanceCounter(&start);
+    for(int i=0;i<200;i++) asm("FYL2XP1");
+    QueryPerformanceCounter(&end);
+    double fy = end.QuadPart - start.QuadPart;
+    
+    QueryPerformanceCounter(&start);
+    for(int i=0;i<200;i++) asm("push eax\n\tpush ebx\n\tpush ecx\n\tpush edx\n\txor eax, eax\n\tCPUID\n\tpop edx\n\tpop ecx\n\tpop ebx\n\tpop eax");
+    QueryPerformanceCounter(&end);
+    double cpu = end.QuadPart - start.QuadPart;
+    double ration=cpu/fy;
+    if(ration > THRESHOLD) sand++;
+    else phys++;
+    sum+=ration;
+    Sleep(5);
+}
+```
+
+## Increasing score of Pentium under load
+When under heavy load, the Pentium timings tend to become erratic, which would often result in `CPUID` timings taking over 10x the `FYL2XP1` timings, when it typically is ~4.5x. As such, we can implement simple outlier detection, to cut out outliers, which we define to be >2x the average score of all previous readings.
+
+Main loop with simple outlier detection:
+```c
+for(int j=0;j<100;j++){
+    QueryPerformanceCounter(&start);
+    for(int i=0;i<200;i++) asm("FYL2XP1");
+    QueryPerformanceCounter(&end);
+    double fy = end.QuadPart - start.QuadPart;
+    fp+=fy;
+    QueryPerformanceCounter(&start);
+    for(int i=0;i<200;i++) asm("push eax\n\tpush ebx\n\tpush ecx\n\tpush edx\n\txor eax, eax\n\tCPUID\n\tpop edx\n\tpop ecx\n\tpop ebx\n\tpop eax");
+    QueryPerformanceCounter(&end);
+    double cpu = end.QuadPart - start.QuadPart;
+    cpid+=cpu;
+    double ration=cpu/fy;
+    if(ration > THRESHOLD){
+        if(ration > 2*(sum/(j+1))){
+            //outliers
+            Sleep(10);
+            j--;
+            continue;
+        }
+    }
+    if(ration > THRESHOLD) sand++;
+    else phys++;
+    sum+=ration;
+    Sleep(5);
+}
+```
+
+As you can see, this code will remove any values that are >2x the current average, and get another reading. This forces the lowest observed Pentium score to hit a nice 83%, while a highest observed Zenbox score to be a low 38%.
+
+## Redo failed tests
+This section serves to further boost the average score of the Pentium device, although it is most likely unnecessary. What we do is check if the number of outliers is over a certain threshold (in this case we use 10, although it really is quite arbitrary), and if so, rerun the test. However, the only circumstance this helps is if you have a short but very CPU-intensive action running on some other part of the machine, then the last tests would be running after the CPU-intensive actions finished, and you would get a nicer result.
+
+Main loop with failed tests redoing implemented:
+```c
+for(int k=0;k<5;k++){
+    phys=0;
+    sand=0;
+    fp=0;
+    cpid=0;
+    sum=0;
+    outl=0;
+    for(int j=0;j<100;j++){
+        QueryPerformanceCounter(&start);
+        for(int i=0;i<200;i++) asm("FYL2XP1");
+        QueryPerformanceCounter(&end);
+        double fy = end.QuadPart - start.QuadPart;
+        fp+=fy;
+        QueryPerformanceCounter(&start);
+        for(int i=0;i<200;i++) asm("push eax\n\tpush ebx\n\tpush ecx\n\tpush edx\n\txor eax, eax\n\tCPUID\n\tpop edx\n\tpop ecx\n\tpop ebx\n\tpop eax");
+        QueryPerformanceCounter(&end);
+        double cpu = end.QuadPart - start.QuadPart;
+        cpid+=cpu;
+        double ration=cpu/fy;
+        if(ration > THRESHOLD){
+            if(ration > 2*(sum/(j+1))){
+                //outliers
+                Sleep(10);
+                j--;
+                outl++;
+                continue;
+            }
+        }
+        if(ration > THRESHOLD) sand++;
+        else phys++;
+        sum+=ration;
+        Sleep(5);
+    }
+    if(outl <= 10){
+        break;
+    }
+}
+```
+
+## Results
+After all the modifications, we can run the code again, and these are the observed results, at their extremities:
+
+-   Triage Windows 7: 5%
+-   Triage Windows 10 1703: 9%
+-   Triage Windows 10 2004: 17%
+-   VirusTotal Zenbox: 38%
+-   Native Windows 10 on Pentium Gold 4425Y: 83%
+
+Note that I ran the Zenbox test 5 different times on 3 different days, and that was the highest score observed. However, the Zenbox score has shown to be quite fluctuating in the past, so I suspect it may on occasion reach as high as 60%. As such, I feel the `MAX_SAND` threshold can be set to 30.
+
+## Addendum - Getting results from VirusTotal
+If you used VirusTotal before, you will know that the sandboxes don't provide visual interaction, so `printf` based reporting will not work. Network reporting should work, but I'd rather not give them a server/webhook that further research can be done on. As such, we can abuse the "Processes Tree" section to act as reporting.
+
+Reporting code:
+```c
+char buff[1000]={0};
+sprintf(buff, "cmd.exe /c \"echo %d%% likely to be physical\"", phys);
+system(buff);
+```
