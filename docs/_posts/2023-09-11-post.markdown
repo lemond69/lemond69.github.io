@@ -3,6 +3,8 @@ layout: page
 title: Detecting cloud sandboxes from ring 3
 ---
 
+> Update 24/09/23 - I managed to beat VirusTotal Zenbox. See [this post](https://lemond69.github.io/2023/09/24/post.html)
+
 > Update 22/09/23 - Added VirusTotal sandbox results
 
 So recently, I came across [this](https://github.com/void-stack/Hypervisor-Detection/) github repo, which claims to be able to detect all sandboxes and VMs, including cloud sandboxes such as [any.run](https://app.any.run/). Of course, this is a claim made by many, and is rarely backed up, and the proof provided did seem convincing, so I took a look, and tried to compile it. I modified the code into C, stripped off all the unnecessary parts (and only kept the CPUID vs FYL2XP1 section), and got this:

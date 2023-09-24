@@ -29,7 +29,7 @@ for(int j=0;j<100;j++){
     Sleep(10);
 }
 ```
-The old script tended to fail when the system was under heavy load, for weaker systems. As such, this would cause the Pentium to hit as low as 64% when opening multiple large programs. Thus, I added the `Sleep(10)` line to the script to allow measurements to be taken over a longer time. However, this rest also seems to allow the hypervisor for Zenbox to get a much higher score, as for how that occurs, I am rather unsure. If anyone knows why this is the case, please do let me know.
+The old script tended to fail when the system was under heavy load, for weaker systems. As such, this would cause the Pentium to hit as low as 64% when opening multiple large programs. Thus, I added the `Sleep(10)` line to the script to allow measurements to be taken over a longer time. However, this rest also seems to allow the hypervisor for Zenbox to get a much higher score, as for how that occurs, I am rather unsure. If anyone knows why this is the case, please do [let me know](https://github.com/lemond69/lemond69.github.io/issues).
 
 ## Decreasing score of Zenbox
 As such, now that we know the Sleep causes Zenbox to seem more like a physical machine, we can shorten the Sleep, and increase sample size to decrease Zenbox score. However, this would also inevitably decrease the score of the Pentium machine, which will be addressed soon.
@@ -141,7 +141,7 @@ After all the modifications, we can run the code again, and these are the observ
 -   VirusTotal Zenbox: 38%
 -   Native Windows 10 on Pentium Gold 4425Y: 83%
 
-Note that I ran the Zenbox test 5 different times on 3 different days, and that was the highest score observed. However, the Zenbox score has shown to be quite fluctuating in the past, so I suspect it may on occasion reach as high as 60%. As such, I feel the `MAX_SAND` threshold can be set to 30.
+Note that I ran the Zenbox test 5 different times on 2 different days, and that was the highest score observed. However, the Zenbox score has shown to be quite fluctuating in the past, so I suspect it may on occasion reach as high as 60%. As such, I feel the `MAX_SAND` threshold can be set to 30.
 
 ## Addendum - Getting results from VirusTotal
 If you used VirusTotal before, you will know that the sandboxes don't provide visual interaction, so `printf` based reporting will not work. Network reporting should work, but I'd rather not give them a server/webhook that further research can be done on. As such, we can abuse the "Processes Tree" section to act as reporting.
