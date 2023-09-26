@@ -140,6 +140,7 @@ After all the modifications, we can run the code again, and these are the observ
 -   Triage Windows 10 2004: 17%
 -   VirusTotal Zenbox: 38%
 -   Native Windows 10 on Pentium Gold 4425Y: 83%
+-   Native Windows 10 on [Intel i5-5200U](https://ark.intel.com/content/www/us/en/ark/products/85212/intel-core-i55200u-processor-3m-cache-up-to-2-70-ghz.html): 100%
 
 Note that I ran the Zenbox test 5 different times on 2 different days, and that was the highest score observed. However, the Zenbox score has shown to be quite fluctuating in the past, so I suspect it may on occasion reach as high as 60%. As such, I feel the `MAX_SAND` threshold can be set to 30.
 
