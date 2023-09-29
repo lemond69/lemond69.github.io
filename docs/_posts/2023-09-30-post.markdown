@@ -1,0 +1,57 @@
+---
+layout: page
+title: Unbeatable DGA
+---
+
+Recently, I came across [this](https://xkcd.com/426/) xkcd, in which a stock price is used to generate an impossible to predict location for geohashing. Now, this also has huge potential for malware, to be used in Domain Generation Algorithms (DGAs), if we modify the code to make it iterative, so that essentially unlimited domains can be generated from a single stock price, making it extraordinarily challenging to block even in firewalled corporate networks (barring the use of whitelists).
+
+## Basic implementation
+We will scrape the [CNN Business page](https://money.cnn.com/data/markets/dow) for Dow prices. While this is more troublesome than using an API, it makes it harder to block, as there would be many legitimate uses for such a webpage as well. Inspecting the network traffic, we can come up with this basic Python code to pull the day's stock opening price.
+```py
+import requests
+data = requests.get("https://money.cnn.com/data/markets/dow").text
+price = data.split('<td>Open</td><td class="wsod_quoteDataPoint">')[1].split("<")[0]
+```
+Next, we can easily add hashing functionality, and we will have recreated the algorithm shown in the xkcd.
+```py
+import hashlib
+hsh = hashlib.md5(price.encode("ascii")).hexdigest()
+url = hsh[:8]+".org"
+```
+We will just use the first 8 characters for simplicity, as there is already an astronomical number of possible combinations (4294967296 to be exact).
+
+Of course, like all other DGAs, you MUST ensure that your messages are signed, lest a defender successfully snatches all your connections and gains full control. This is out of the scope of this post.
+
+Now, the problem with this is that if the defenders are able to snag the domain before you do, your connection for the day is essentially sinkholed. We will discuss this in the next section.
+
+## Iterative algorithm
+The fix to this problem is relatively simple. By repeatedly hashing the value, we get what essentially acts as a [PRNG](https://en.wikipedia.org/wiki/Pseudorandom_number_generator), with the stock price acting as a "seed", allowing it to remain impossible to predict before the day itself, making it impossible for corporate firewalls to block the domains ahead of time. Doing so also means so long as even a single one of the n domains checked is not blocked/sinkholed, a connection can be successfully established. We can implement this algorithm in Python.
+```py
+for i in range(1000):
+    url = hsh[:8]+".org"
+    print("checking",url)
+    try:
+        socket.gethostbyname(url)
+        if requests.head("http://"+url).status_code<400:
+            print("Active domain found!")
+    except (ConnectionError, socket.gaierror):
+        pass
+    hsh = hashlib.md5(hsh.encode("ascii")).hexdigest()
+```
+
+## Reducing suspicion
+Currently, the domain names are still very suspicious looking, with them being random 8 character hexadecimal codes, which may act as an IOC for any sysadmin scrolling through network logs. As such, by using [random word generators](https://randomwordgenerator.com/), we can generate a mapping table for the characters, to make them seem more natural. This also reduces entropy, making it less likely to trigger automated entropy-based detection systems.
+```py
+def towords(code):
+    words=["base", "rest", "lesson", "tidy", "harass", "shop", "miner", "dozen", "spoil", "revoke", "gem", "pack", "attack", "script", "volume", "glass"]
+    output=""
+    for x in code:
+        output+=words[int(x, 16)]+"-"
+    output=output[:-1]
+    return output
+```
+
+## Conclusion
+In conclusion, this DGA is essentially unbeatable, as it is impossible to guess and block/sinkhole the domains ahead of time, making it very difficult for sysadmins to block it from network traffic alone, without using whitelists. Even if it were fully reverse-engineered, unlike most common DGAs, this still does not let you guess future domains, adding an extra layer of security. Once again, it is critical to ensure that you do some form of signature verification on any messages sent through such channels, to prevent overtaking by 3rd parties.
+
+Code also available [here](https://github.com/lemond69/stocks-dga)
