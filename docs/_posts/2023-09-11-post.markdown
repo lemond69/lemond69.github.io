@@ -3,7 +3,7 @@ layout: page
 title: Detecting cloud sandboxes from ring 3
 ---
 
-> Update 24/09/23 - I managed to beat VirusTotal Zenbox. See [this post](https://lemond69.github.io/2023/09/24/post.html)
+> Update 24/09/23 - I managed to beat VirusTotal Zenbox. See [this post](/2023/09/24/post.html)
 
 > Update 22/09/23 - Added VirusTotal sandbox results
 

@@ -2,6 +2,7 @@
 layout: page
 title: Sandbox detection part 3
 ---
+> Part 3/3. Read [part 1](/2023/09/14/post.html) and [part 2](/2023/09/24/post.html) first.
 
 Recently, it has come to my attention that some sandboxes may actually hook `rdtsc` or any wrapper functions (including `QueryPerformanceCounter`), and cause the counters to artificially decrease whenever a `CPUID` instruction is called, to fool malware which may abuse `CPUID` to detect sandboxes. This is unacceptable, so I found a way to do it without reading any timestamps, by using multithreading.
 

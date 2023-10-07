@@ -2,8 +2,7 @@
 layout: page
 title: Beating VirusTotal Zenbox
 ---
-
-> Note: This is part 2 to [this post](https://lemond69.github.io/2023/09/11/post.html). Please read that first for context
+> Note: This is part 2 to [this post](/2023/09/11/post.html). Part 3 is available [here](/2023/10/02/post.html)
 
 >  All code shown in the post is also available [here](https://github.com/lemond69/sandbox-detect)
 
