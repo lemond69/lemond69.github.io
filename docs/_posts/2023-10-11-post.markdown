@@ -1,0 +1,89 @@
+---
+layout: page
+title: Abusing signed zeros for string encryption
+---
+
+Recently, I came across [this](https://orlp.net/blog/subtraction-is-functionally-complete/) blog post, showcasing how IEEE-754 floating point subtraction is functionally complete, by abusing signed zeros. If you want to learn more about how or why this works, I recommend you check out that post. This post will focus more on implementation and how this can be used for shellcode/payload encryption.
+
+## Implementing basic operators
+We can define basic operators using the following macros:
+```c
+#define TRUE 0.0
+#define FALSE -0.0
+#define not(a) -a
+#define or(a, b) (a - not(b))
+#define and(a, b) not(or(a, b))
+#define xor(a, b) or(and(not(a), b), and(a, not(b)))
+```
+This once again, is adapted from the blog post. Note that macros are used instead of regular functions, this is to make it harder to reverse, as when optimizations are turned off, the `call` instruction makes it easier to mark functions.
+
+To convert the int to signed zeros, and vice versa, we can use this code:
+```c
+#define toBool(a) ((a) ? TRUE : FALSE)
+int eval(double a){
+    //this is to pull the sign bit from the double
+    //note index 7 is used due to endianness
+    //IEEE754 defines sign bit as first bit
+    return ((unsigned char*)&a)[7] == 0;
+}
+``` 
+Once we implemented basic logic, we can move on to applying logic on multi-bit datatypes. We can implement a simple xor function for `char` by splitting each `char` into its bits using bitwise operations. We can define this macro first:
+```c
+#define get(a, b) ((a>>(b))&1)
+```
+The `&1` is used to ensure only the least significant bit is preserved. Using this macro, we can now implement the function:
+```c
+char xorc(char a, char b){
+    char outs = 0;
+    for(int i=0;i<8;i++){
+        outs |= eval(xor(toBool(get(a, i)),toBool(get(b, i)))) << i;
+    }
+    return outs;
+}
+```
+First, we get the bit of a and b, xor them together, then we convert to an `int` using `eval`. Then, we leftshift the bit, and it can be used as a bitmask to set the individual bit in `outs`. As such, this function returns `a XOR b`.
+
+## Implementing key generation
+Now, we can use these bitwise functions to implement a simple keygen algorithm. We can make a function to determine whether a number is "special", then use the nth "special" number as the key.
+```c
+int special(int a){
+    double out1 = TRUE;
+    double out2 = FALSE;
+    for(int i=0;i<32;i+=2){
+        out1 = and(out1, xor(out1, toBool(get(a, i))));
+        out2 = and(out2, xor(out2, toBool(get(a, i+1))));
+    }
+    return eval(and(out1, out2));
+}
+```
+This interweaving algorithm is pretty much pure nonsense, it is randomly made. The algorithm can be whatever you want, it doesn't quite matter. However, it is a good practice to ensure that the generated terms do not show up in [OEIS](https://oeis.org/). This will make it harder to reverse your algorithm. For example, this algorithm makes the sequence `4, 5, 12, 13, 14, 15, 64, 65, 68, 69` (first 10 terms), which is not found in OEIS.
+
+Now, we can put all these together to make an encryption algorithm.
+
+## Encrypting strings
+To do this, we will first find the nth "special" number (in this case we use 1000000), then use that as the key to encrypt and decrypt the string with XOR.
+```c
+int main(){
+    int j=1;
+    int pn=0;
+    while(pn<1000000){
+        j++;
+        if(special(j)){
+            pn++;
+        }
+    }
+    printf("special %d, #%d found\n", j, pn);
+    char key[4] = {0};
+    memcpy(key, &j, 4);
+    char* txt = //obtain this however you like
+    for(int i=0;i<strlen(txt);i++) txt[i] = xorc(txt[i], key[i%4]);
+    printf("%s\n", txt);
+}
+```
+Special number #1000000 takes ~0.27s to find on my machine. If you want, you can increase this time to ~5s or so to be able to timeout any local sandboxes. After finding this key, we can use the signed zeros to do xor as well, for more obfuscation.
+
+## Conclusion
+In conclusion, this method is extremely versatile, can be used for many obfuscation purposes, not limited to simple bitwise operations. Once again, much thanks to the author of [this](https://orlp.net/blog/subtraction-is-functionally-complete/) blog post for providing the ideas and foundations. Code is also available [here](https://github.com/lemond69/signed-zeros/)
+
+References:
+[https://orlp.net/blog/subtraction-is-functionally-complete/](https://orlp.net/blog/subtraction-is-functionally-complete/)
